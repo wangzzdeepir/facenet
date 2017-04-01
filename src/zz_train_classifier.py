@@ -131,15 +131,16 @@ def main(args):
                     image = tf.image.resize_image_with_crop_or_pad(image, args.image_size, args.image_size)
                 if args.random_flip:
                     image = tf.image.random_flip_left_right(image)
+                image = tf.image.rgb_to_grayscale(image)
     
                 #pylint: disable=no-member
-                image.set_shape((args.image_size, args.image_size, 3))
+                #image.set_shape((args.image_size, args.image_size, 3))
                 images.append(tf.image.per_image_standardization(image))
             images_and_labels.append([images, label])
     
         image_batch, label_batch = tf.train.batch_join(
             images_and_labels, batch_size=batch_size_placeholder, 
-            shapes=[(args.image_size, args.image_size, 3), ()], enqueue_many=True,
+            shapes=[(args.image_size, args.image_size, 1), ()], enqueue_many=True,
             capacity=4 * nrof_preprocess_threads * args.batch_size,
             allow_smaller_final_batch=True)
         image_batch = tf.identity(image_batch, 'image_batch')
@@ -148,9 +149,9 @@ def main(args):
         
         print('Total number of classes: %d' % nrof_classes)
         print('Total number of examples: %d' % len(image_list))
-        
+
         print('Building training graph')
-        
+
         batch_norm_params = {
             # Decay for the moving averages
             'decay': 0.995,
@@ -181,7 +182,7 @@ def main(args):
 
         # Add center loss
         if args.center_loss_factor>0.0:
-            prelogits_center_loss, _ = facenet.center_loss(prelogits, label_batch, args.center_loss_alfa, nrof_classes)
+            prelogits_center_loss, _ = facenet.center_loss(bottleneck, label_batch, args.center_loss_alfa, nrof_classes)
             tf.add_to_collection(tf.GraphKeys.REGULARIZATION_LOSSES, prelogits_center_loss * args.center_loss_factor)
 
         learning_rate = tf.train.exponential_decay(learning_rate_placeholder, global_step,
@@ -193,7 +194,7 @@ def main(args):
             labels=label_batch, logits=logits, name='cross_entropy_per_example')
         cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
         tf.add_to_collection('losses', cross_entropy_mean)
-        
+
         # Calculate the total losses
         regularization_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
         total_loss = tf.add_n([cross_entropy_mean] + regularization_losses, name='total_loss')
@@ -209,7 +210,7 @@ def main(args):
         summary_op = tf.summary.merge_all()
 
         # Start running operations on the Graph.
-        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=args.gpu_memory_fraction)
+        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=args.gpu_memory_fraction, allow_growth=True)
         sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options, log_device_placement=False))
         sess.run(tf.global_variables_initializer())
         sess.run(tf.local_variables_initializer())
